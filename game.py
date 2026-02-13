@@ -68,7 +68,7 @@ class Game:
         # These two variables used in progress bar's formula
         # for imposter in multiplayer mode
         self.bot_killed = 0
-        self.bot_count = 9
+        self.bot_count = NO_OF_BOTS
         self.bot_count_show_status = True
         # ------------------------------
 
@@ -142,6 +142,26 @@ class Game:
         self.emerg_meeting_report_status = False
         self.skip_meeting_button_status = False
         self.imposter_among_us_status = True
+        self.ai_observer_enabled = False
+        self.ai_observer_speed = 210
+        self.ai_observer_direction = vec(0, 0)
+        self.ai_observer_next_turn = 0
+        self.ai_waypoints = []
+        self.ai_emergency_button_pos = vec(3224, 656)
+        self.ai_last_kill_pos = None
+        self.ai_last_kill_tick = 0
+        self.ai_forced_crew_win = False
+        self.ai_reporter_name = ""
+        self.ai_meeting_active = False
+        self.ai_meeting_started_at = 0
+        self.ai_meeting_duration_ms = 7000
+        self.ai_meeting_chat_lines = []
+        self.ai_meeting_votes = {}
+        self.ai_meeting_result_text = ""
+        self.ai_meeting_cooldown_until = 0
+        self.ai_suspicion_memory = {}
+        self.ai_meetings_started = 0
+        self.ai_reports_triggered = 0
         self.kill_victim_anim = False
         self.kill_victim_anim_index = -1
         self.emergency_meeting_index = 0
@@ -680,6 +700,19 @@ class Game:
         self.items = pg.sprite.Group()
         self.bots = pg.sprite.Group()
         self.players_server = pg.sprite.Group()
+        self.ai_waypoints = []
+        self.ai_forced_crew_win = False
+        self.ai_reporter_name = ""
+        self.ai_last_kill_pos = None
+        self.ai_last_kill_tick = 0
+        self.ai_meeting_active = False
+        self.ai_meeting_chat_lines = []
+        self.ai_meeting_votes = {}
+        self.ai_meeting_result_text = ""
+        self.ai_meeting_cooldown_until = 0
+        self.ai_suspicion_memory = {}
+        self.ai_meetings_started = 0
+        self.ai_reports_triggered = 0
 
         # mini map player position indicator
         self.player_map_square = pg.Surface([3 * 5, 3 * 5], pg.SRCALPHA, 32)
@@ -713,6 +746,14 @@ class Game:
                 Obstacle(self, tile_object.x, tile_object.y, tile_object.width, tile_object.height)
             if tile_object.name == 'admin_btn2':
                 Obstacle(self, tile_object.x, tile_object.y, tile_object.width, tile_object.height)
+
+            if tile_object.name in ['bot1', 'bot2', 'bot3', 'bot4', 'bot5', 'bot6', 'bot7', 'bot8', 'bot9', 'bot10',
+                                    'vent', 'emergency_btn', 'emerg_btn', 'medbay_comp', 'security_room_comp',
+                                    'reactor', 'engines', 'admin_btn1', 'admin_btn2']:
+                self.ai_waypoints.append(vec(obj_center))
+
+            if tile_object.name in ['emergency_btn', 'emerg_btn']:
+                self.ai_emergency_button_pos = vec(obj_center)
 
             if tile_object.name == 'bot1':
                 bot_colours_temp_current = random.choice(bot_colours_temp)
@@ -768,6 +809,154 @@ class Game:
         self.camera = Camera(self.map.width, self.map.height)
         self.draw_debug = False
         self.effect_sounds['start_game'].play()
+
+    def stop_all_audio(self):
+        pg.mixer.music.stop()
+        pg.mixer.Channel(0).stop()
+        for m in self.foot_sounds['footsteps']:
+            m.stop()
+        for m in self.effect_sounds.values():
+            m.stop()
+        for m in self.electric_shock_sounds['electric_shock']:
+            m.stop()
+        for m in self.comms_radio_sounds['comms_radio']:
+            m.stop()
+        for m in self.ambient_sounds.values():
+            m.stop()
+
+    def handle_ai_report(self, reporter_bot):
+        if self.gamemode != "Freeplay" or self.ai_meeting_active:
+            return
+
+        now = pg.time.get_ticks()
+        if now < self.ai_meeting_cooldown_until:
+            return
+
+        self.ai_reporter_name = reporter_bot.bot_colour
+        self.ai_reports_triggered += 1
+        self.start_ai_meeting(reporter_bot)
+
+    def start_ai_meeting(self, reporter_bot):
+        self.ai_meeting_active = True
+        self.ai_meeting_started_at = pg.time.get_ticks()
+        self.ai_meeting_chat_lines = []
+        self.ai_meeting_votes = {}
+        self.ai_meeting_result_text = ""
+        self.ai_meetings_started += 1
+        self.effect_sounds['emergency_alarm'].play()
+
+        alive_bots = [bot for bot in self.bots if bot.alive_status]
+        candidates = [self.player.player_colour] + [bot.bot_colour for bot in alive_bots]
+        alive_voters = alive_bots[:]
+
+        opinions = {}
+        evidence_strength = 0.3
+        now = pg.time.get_ticks()
+        if self.ai_last_kill_pos is not None and (now - self.ai_last_kill_tick) < 12000:
+            distance_factor = max(0.0, 1.0 - (reporter_bot.pos.distance_to(self.ai_last_kill_pos) / 700.0))
+            evidence_strength += 1.5 * distance_factor
+
+        for voter in alive_voters:
+            voter_map = {}
+            for candidate in candidates:
+                if candidate == voter.bot_colour:
+                    continue
+                score = random.uniform(0.1, 1.2)
+                score += self.ai_suspicion_memory.get(voter.bot_colour, {}).get(candidate, 0.0)
+                if candidate == self.player.player_colour:
+                    seen_recently = now - voter.ai_last_seen_imposter_tick
+                    if seen_recently < 9000:
+                        score += (2.5 * voter.ai_boldness)
+                    body_seen_recently = now - voter.ai_last_seen_body_tick
+                    if body_seen_recently < 9000:
+                        score += 1.1
+                if candidate == self.player.player_colour and voter.bot_colour == reporter_bot.bot_colour:
+                    score += 2.0 + evidence_strength
+                voter_map[candidate] = score
+            opinions[voter.bot_colour] = voter_map
+
+        for voter in alive_voters:
+            if not opinions[voter.bot_colour]:
+                continue
+            top_target = max(opinions[voter.bot_colour], key=opinions[voter.bot_colour].get)
+            confidence = opinions[voter.bot_colour][top_target]
+            self.ai_meeting_chat_lines.append(f"{voter.bot_colour}: I suspect {top_target} ({confidence:.1f})")
+
+        for listener in alive_voters:
+            for speaker_colour, speaker_opinion in opinions.items():
+                if speaker_colour == listener.bot_colour:
+                    continue
+                if not speaker_opinion:
+                    continue
+                target = max(speaker_opinion, key=speaker_opinion.get)
+                influence = 0.35 * listener.ai_trust_factor
+                if target in opinions[listener.bot_colour]:
+                    opinions[listener.bot_colour][target] += influence
+
+        for voter in alive_voters:
+            if not opinions[voter.bot_colour]:
+                continue
+            vote_target = max(opinions[voter.bot_colour], key=opinions[voter.bot_colour].get)
+            self.ai_meeting_votes[voter.bot_colour] = vote_target
+
+    def resolve_ai_meeting(self):
+        if not self.ai_meeting_votes:
+            self.ai_meeting_result_text = "No votes were cast."
+            self.ai_meeting_active = False
+            return
+
+        tally = {}
+        for _, target in self.ai_meeting_votes.items():
+            tally[target] = tally.get(target, 0) + 1
+
+        top_target = max(tally, key=tally.get)
+        top_votes = tally[top_target]
+        total_votes = len(self.ai_meeting_votes)
+
+        if top_votes <= total_votes / 2:
+            self.ai_meeting_result_text = "Meeting ended with no consensus."
+            self.ai_meeting_active = False
+            self.ai_meeting_cooldown_until = pg.time.get_ticks() + 4500
+            return
+
+        if top_target == self.player.player_colour:
+            self.ai_forced_crew_win = True
+            self.ai_reporter_name = top_target
+            self.ai_meeting_result_text = f"{top_target} was voted out by AI crew."
+            self.ai_meeting_active = False
+            self.ai_meeting_cooldown_until = pg.time.get_ticks() + 4500
+            return
+
+        for bot in self.bots:
+            if bot.bot_colour == top_target and bot.alive_status:
+                bot.alive_status = False
+                bot.image = bot.dead_player_img
+                self.bot_count = max(0, self.bot_count - 1)
+                self.ai_meeting_result_text = f"{top_target} was ejected by AI vote."
+                break
+
+        for voter_colour, voted_target in self.ai_meeting_votes.items():
+            self.ai_suspicion_memory.setdefault(voter_colour, {})
+            if voted_target == top_target:
+                self.ai_suspicion_memory[voter_colour][voted_target] = min(
+                    3.5,
+                    self.ai_suspicion_memory[voter_colour].get(voted_target, 0.0) + 0.25,
+                )
+            else:
+                self.ai_suspicion_memory[voter_colour][voted_target] = max(
+                    0.0,
+                    self.ai_suspicion_memory[voter_colour].get(voted_target, 0.0) - 0.2,
+                )
+
+        self.ai_meeting_active = False
+        self.ai_meeting_cooldown_until = pg.time.get_ticks() + 4500
+
+    def update_ai_meeting(self):
+        if not self.ai_meeting_active:
+            return
+
+        if (pg.time.get_ticks() - self.ai_meeting_started_at) >= self.ai_meeting_duration_ms:
+            self.resolve_ai_meeting()
 
     # CLEAR ASTEROIDS FUNCTIONS
     def show_score(self, x, y):
@@ -977,14 +1166,12 @@ class Game:
         mixer.music.set_volume(0.7)
 
         self.player = Player(self, random.choice(self.player_pos), 0, True, self.player_colour)
+        self.ai_observer_enabled = True
+        self.ai_observer_next_turn = pg.time.get_ticks()
+        self.bot_count = len(self.bots)
 
         self.playing = True
         self.player.imposter = True
-
-        for b in self.bots:
-            if b.bot_colour == self.player_colour:
-                b.kill()
-                break
 
         self.imposter_among_us_status = False
 
@@ -1000,6 +1187,8 @@ class Game:
         while self.playing:
             self.dt = self.clock.tick(FPS) / 1000
             self.events()
+            self.update_ai_observer()
+            self.update_ai_meeting()
             if self.paused == False:
                 self.update()
             self.draw()
@@ -1013,57 +1202,84 @@ class Game:
             self.seconds = (pg.time.get_ticks() - self.start_ticks) / 1000
             self.sabotage_timer_visible_status = True
 
+            if self.ai_forced_crew_win:
+                self.stop_all_audio()
+                self.effect_sounds["victory_crew"].play()
+                self.menu.game_over(self.score_list, "AI meeting voted out the imposter")
+                return
+
             # If missions are completed then win or loss display
             # For crew mate
             if self.missions_done == 8:
-                pg.mixer.music.stop()  # turn off background music
-                pg.mixer.Channel(0).stop()
-                for m in self.foot_sounds['footsteps']:
-                    m.stop()
-                for m in self.effect_sounds.values():
-                    m.stop()
-                for m in self.electric_shock_sounds['electric_shock']:
-                    m.stop()
-                for m in self.comms_radio_sounds['comms_radio']:
-                    m.stop()
-                for m in self.ambient_sounds.values():
-                    m.stop()
+                self.stop_all_audio()
                 self.effect_sounds["victory_crew"].play()
                 self.menu.game_over(self.score_list, '')
                 return
             # For imposter
             # if imposter kills all the bots or reactor meltdown sabotage timer equals to 0 then imposter wins
             elif self.bot_count == 0 or (self.sabotagecritical == True and (self.sabotagecriticaltimer - self.sabotagecriticaltimer_start) > 20000):
-                pg.mixer.music.stop()  # turn off background music
-                pg.mixer.Channel(0).stop()
-                for m in self.foot_sounds['footsteps']:
-                    m.stop()
-                for m in self.effect_sounds.values():
-                    m.stop()
-                for m in self.electric_shock_sounds['electric_shock']:
-                    m.stop()
-                for m in self.comms_radio_sounds['comms_radio']:
-                    m.stop()
-                for m in self.ambient_sounds.values():
-                    m.stop()
+                self.stop_all_audio()
                 self.effect_sounds["victory_imposter"].play()
                 self.menu.game_over_imposter(self.score_list, '')
                 return
             elif self.game_left:
-                pg.mixer.music.stop()  # turn off background music
-                pg.mixer.Channel(0).stop()
-                for m in self.foot_sounds['footsteps']:
-                    m.stop()
-                for m in self.effect_sounds.values():
-                    m.stop()
-                for m in self.electric_shock_sounds['electric_shock']:
-                    m.stop()
-                for m in self.comms_radio_sounds['comms_radio']:
-                    m.stop()
-                for m in self.ambient_sounds.values():
-                    m.stop()
+                self.stop_all_audio()
                 self.effect_sounds["game_left"].play()
                 return
+
+    def update_ai_observer(self):
+        if not self.ai_observer_enabled or self.gamemode != "Freeplay" or not self.player.alive_status:
+            return
+
+        now = pg.time.get_ticks()
+        if now >= self.ai_observer_next_turn:
+            self.ai_observer_next_turn = now + random.randint(900, 2600)
+            direction = random.choice(["left", "right", "up", "down", "idle"])
+            if direction == "left":
+                self.ai_observer_direction = vec(-1, 0)
+            elif direction == "right":
+                self.ai_observer_direction = vec(1, 0)
+            elif direction == "up":
+                self.ai_observer_direction = vec(0, -1)
+            elif direction == "down":
+                self.ai_observer_direction = vec(0, 1)
+            else:
+                self.ai_observer_direction = vec(0, 0)
+
+        self.player.vel = self.ai_observer_direction * self.ai_observer_speed
+
+        if self.ai_observer_direction.x < 0:
+            self.player.image = self.player.player_imgs_left[self.player.left_img_index]
+            self.player.left_img_index = (self.player.left_img_index + 1) % len(self.player.player_imgs_left)
+        elif self.ai_observer_direction.x > 0:
+            self.player.image = self.player.player_imgs_right[self.player.right_img_index]
+            self.player.right_img_index = (self.player.right_img_index + 1) % len(self.player.player_imgs_right)
+        elif self.ai_observer_direction.y < 0:
+            self.player.image = self.player.player_imgs_up[self.player.up_img_index]
+            self.player.up_img_index = (self.player.up_img_index + 1) % len(self.player.player_imgs_up)
+        elif self.ai_observer_direction.y > 0:
+            self.player.image = self.player.player_imgs_down[self.player.down_img_index]
+            self.player.down_img_index = (self.player.down_img_index + 1) % len(self.player.player_imgs_down)
+
+        if not self.player.imposter:
+            return
+
+        for bot in self.bots:
+            if not bot.alive_status:
+                continue
+            if self.player.pos.distance_to(bot.pos) <= 60 and (self.killcooldown - self.killcooldown_start) > 15000:
+                self.effect_sounds['imposter_kill_sound'].play()
+                bot.image = bot.dead_player_img
+                bot.alive_status = False
+                bot.play_kill_count = 1
+                self.bot_killed += 1
+                self.bot_count -= 1
+                self.ai_last_kill_pos = vec(bot.pos)
+                self.ai_last_kill_tick = pg.time.get_ticks()
+                self.time_left_to_kill = 15
+                pygame.time.set_timer(self.kill_timer_event, 1000)
+                self.killcooldown_start = self.killcooldown
+                break
 
     def runmultiplayer(self):
         # Game main loop - set self.playing = False to end the game
@@ -1963,6 +2179,39 @@ class Game:
                 if self.emergency:
                     self.emergency_meeting_index = 3
 
+        if self.ai_meeting_active and self.gamemode == "Freeplay":
+            self.screen.blit(self.dim_screen, (0, 0))
+            font_title = pg.font.Font(FONT, 28)
+            font_body = pg.font.Font(FONT, 18)
+            title = font_title.render("AI Emergency Meeting", True, WHITE)
+            self.screen.blit(title, (WIDTH // 2 - 170, 70))
+            subtitle = font_body.render(f"Reporter: {self.ai_reporter_name}", True, YELLOW)
+            self.screen.blit(subtitle, (WIDTH // 2 - 120, 110))
+
+            start_y = 160
+            for line in self.ai_meeting_chat_lines[:8]:
+                rendered = font_body.render(line, True, WHITE)
+                self.screen.blit(rendered, (WIDTH // 2 - 290, start_y))
+                start_y += 28
+
+            remaining = max(0, int((self.ai_meeting_duration_ms - (pg.time.get_ticks() - self.ai_meeting_started_at)) / 1000))
+            timer_text = font_body.render(f"Voting in: {remaining}s", True, RED)
+            self.screen.blit(timer_text, (WIDTH // 2 - 70, HEIGHT - 80))
+
+        if self.ai_meeting_result_text and self.gamemode == "Freeplay" and not self.ai_meeting_active:
+            font_body = pg.font.Font(FONT, 20)
+            result = font_body.render(self.ai_meeting_result_text, True, YELLOW)
+            self.screen.blit(result, (WIDTH // 2 - 230, HEIGHT - 45))
+
+        if self.gamemode == "Freeplay":
+            stats_font = pg.font.Font(FONT, 16)
+            stats_text = stats_font.render(
+                f"AI Meetings: {self.ai_meetings_started}  Reports: {self.ai_reports_triggered}",
+                True,
+                WHITE,
+            )
+            self.screen.blit(stats_text, (15, HEIGHT - 30))
+
 
         # Emergency button and player collision detection
         hits = pg.sprite.spritecollide(self.player, self.items, False)
@@ -2658,6 +2907,8 @@ class Game:
                 # if key is H and game is not paused
                 if event.key == pg.K_h and not self.paused:
                     self.draw_debug = not self.draw_debug
+                if event.key == pg.K_F6 and self.gamemode == "Freeplay":
+                    self.ai_observer_enabled = not self.ai_observer_enabled
                 # Create a toggle key for night fog switch
                 # if key is ctrl and game is not paused
                 if (event.key == pg.K_LCTRL or event.key == pg.K_RCTRL) and not self.paused and self.emerg_meeting_button_status == 0:

@@ -17,6 +17,20 @@ An unofficial clone of the popular multiplayer game 'Among Us', recreated in Pyt
 #### Singleplayer
 * To start the game `python main.py`
 * Choose 'Freeplay' from the menu to start playing
+* Freeplay now starts an **AI simulation** with 10 AI crewmates plus 1 AI-controlled imposter that you spectate.
+* Press `F6` in Freeplay to toggle between AI observer mode and manual control.
+* AI crewmates now hold emergency meetings, share suspicions, and vote based on their own observations/trust.
+* During Freeplay, look at bottom-left for `AI Meetings` and `Reports` counters to verify the AI social system is active.
+
+#### Updating from GitHub and verifying changes
+* Fetch latest changes: `git fetch origin`
+* Switch to your main branch: `git checkout main`
+* Pull updates: `git pull origin main`
+* Run the game: `python main.py`
+* In Freeplay, confirm updates by observing:
+  * bots running toward emergency after finding bodies,
+  * meeting overlay (`AI Emergency Meeting`) with accusation lines,
+  * bottom-left counters (`AI Meetings`, `Reports`) increasing.
 
 #### Local Multiplayer
 * To start the game server for multiplayer support `python server.py`
