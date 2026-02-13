@@ -2,7 +2,6 @@ import socket
 import asyncore
 import random
 import pickle
-import time
 
 BUFFERSIZE = 8192
 
@@ -39,10 +38,33 @@ class Minion:
     self.eject_img = None
 
 minionmap = {}
+socket_to_player = {}
+
+
+def remove_connection(conn):
+  player_id = socket_to_player.pop(conn, None)
+  if player_id is not None:
+    minionmap.pop(player_id, None)
+    print(f"Player {player_id} disconnected")
+
+  if conn in outgoing:
+    outgoing.remove(conn)
+
+  try:
+    conn.close()
+  except OSError:
+    pass
 
 def updateWorld(message):
-  arr = pickle.loads(message)
-  print(str(arr))
+  try:
+    arr = pickle.loads(message)
+  except (pickle.PickleError, TypeError, EOFError) as exc:
+    print(f"Invalid sync payload: {exc}")
+    return
+
+  if not isinstance(arr, list) or len(arr) < 26:
+    return
+
   player_id = arr[1]
   x = arr[2]
   y = arr[3]
@@ -69,7 +91,8 @@ def updateWorld(message):
   eject_sync = arr[24]
   eject_img = arr[25]
 
-  if player_id == 0: return
+  if player_id == 0 or player_id not in minionmap:
+    return
 
   minionmap[player_id].x = x
   minionmap[player_id].y = y
@@ -98,22 +121,18 @@ def updateWorld(message):
 
   remove = []
 
-  for i in outgoing:
-    update = ['player locations']
+  update = ['player locations']
+  for value in minionmap.values():
+    update.append([value.player_id, value.x, value.y, value.alive_status, value.sync_img, value.sync_img_index, value.left_img_index, value.right_img_index, value.up_img_index, value.down_img_index, value.player_colour, value.tasks_completed, value.sabotagelights_sync, value.sabotagereactor_sync, value.victim_id, value.imposter, value.emergency_sync, value.voted, value.got_votes, value.emergency_meeting_img_sync, value.emergency_meeting_img_sync_report, value.victim_id_report, value.got_reported, value.eject_sync, value.eject_img])
 
-    for key, value in minionmap.items():
-      update.append([value.player_id, value.x, value.y, value.alive_status, value.sync_img, value.sync_img_index, value.left_img_index, value.right_img_index, value.up_img_index, value.down_img_index, value.player_colour, value.tasks_completed, value.sabotagelights_sync, value.sabotagereactor_sync, value.victim_id, value.imposter, value.emergency_sync, value.voted, value.got_votes, value.emergency_meeting_img_sync, value.emergency_meeting_img_sync_report, value.victim_id_report, value.got_reported, value.eject_sync, value.eject_img])
-    
+  for i in outgoing:
     try:
       i.send(pickle.dumps(update))
     except Exception:
       remove.append(i)
-      continue
-    
-    print ('sent update data')
 
-    for r in remove:
-      outgoing.remove(r)
+  for conn in remove:
+    remove_connection(conn)
 
 class MainServer(asyncore.dispatcher):
   def __init__(self, port):
@@ -128,15 +147,20 @@ class MainServer(asyncore.dispatcher):
     player_id = random.randint(1000, 1000000)
     playerminion = Minion(player_id)
     minionmap[player_id] = playerminion
+    socket_to_player[conn] = player_id
     conn.send(pickle.dumps(['id update', player_id]))
     SecondaryServer(conn)
 
 class SecondaryServer(asyncore.dispatcher_with_send):
+  def handle_close(self):
+    remove_connection(self.socket)
+
   def handle_read(self):
     recievedData = self.recv(BUFFERSIZE)
     if recievedData:
       updateWorld(recievedData)
-    else: self.close()
+    else:
+      self.close()
 
 MainServer(4321)
 asyncore.loop()

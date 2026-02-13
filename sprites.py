@@ -126,6 +126,9 @@ class Player(pg.sprite.Sprite):
     # Check which key or combination of keys are being pressed
     # Control player movement speed
     def get_keys(self):
+        if self.player_islocal and self.game.gamemode == "Freeplay" and self.game.ai_observer_enabled:
+            return
+
         if self.player_islocal == True and self.alive_status == True and self.game.emergency == False:
             self.vel = vec(0, 0)
             keys = pg.key.get_pressed()
@@ -437,6 +440,8 @@ class Bot(pg.sprite.Sprite):
         self.pos = vec(x, y)
         self.type = bot_type
         self.play_kill_count = 0
+        self.ai_change_direction_at = pg.time.get_ticks() + random.randint(1200, 3500)
+        self.bot_speed = random.randint(80, 160)
         
 
 
@@ -473,6 +478,22 @@ class Bot(pg.sprite.Sprite):
 
 
     def update(self):
+        if self.alive_status:
+            now = pg.time.get_ticks()
+            if now >= self.ai_change_direction_at:
+                self.ai_change_direction_at = now + random.randint(1200, 3500)
+                direction = random.choice(["left", "right", "up", "down", "idle"])
+                if direction == "left":
+                    self.vel = vec(-self.bot_speed, 0)
+                elif direction == "right":
+                    self.vel = vec(self.bot_speed, 0)
+                elif direction == "up":
+                    self.vel = vec(0, -self.bot_speed)
+                elif direction == "down":
+                    self.vel = vec(0, self.bot_speed)
+                else:
+                    self.vel = vec(0, 0)
+
         # dt = delta time used for frame independent movements - Delta time (time since last tick)
         self.pos += self.vel * self.game.dt
         # 2 collision checks one for each axis x, y
@@ -566,4 +587,3 @@ class Button:
             return True
         else:
             return False
-

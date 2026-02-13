@@ -68,7 +68,7 @@ class Game:
         # These two variables used in progress bar's formula
         # for imposter in multiplayer mode
         self.bot_killed = 0
-        self.bot_count = 9
+        self.bot_count = NO_OF_BOTS
         self.bot_count_show_status = True
         # ------------------------------
 
@@ -142,6 +142,10 @@ class Game:
         self.emerg_meeting_report_status = False
         self.skip_meeting_button_status = False
         self.imposter_among_us_status = True
+        self.ai_observer_enabled = False
+        self.ai_observer_speed = 210
+        self.ai_observer_direction = vec(0, 0)
+        self.ai_observer_next_turn = 0
         self.kill_victim_anim = False
         self.kill_victim_anim_index = -1
         self.emergency_meeting_index = 0
@@ -977,14 +981,12 @@ class Game:
         mixer.music.set_volume(0.7)
 
         self.player = Player(self, random.choice(self.player_pos), 0, True, self.player_colour)
+        self.ai_observer_enabled = True
+        self.ai_observer_next_turn = pg.time.get_ticks()
+        self.bot_count = len(self.bots)
 
         self.playing = True
         self.player.imposter = True
-
-        for b in self.bots:
-            if b.bot_colour == self.player_colour:
-                b.kill()
-                break
 
         self.imposter_among_us_status = False
 
@@ -1000,6 +1002,7 @@ class Game:
         while self.playing:
             self.dt = self.clock.tick(FPS) / 1000
             self.events()
+            self.update_ai_observer()
             if self.paused == False:
                 self.update()
             self.draw()
@@ -1064,6 +1067,58 @@ class Game:
                     m.stop()
                 self.effect_sounds["game_left"].play()
                 return
+
+    def update_ai_observer(self):
+        if not self.ai_observer_enabled or self.gamemode != "Freeplay" or not self.player.alive_status:
+            return
+
+        now = pg.time.get_ticks()
+        if now >= self.ai_observer_next_turn:
+            self.ai_observer_next_turn = now + random.randint(900, 2600)
+            direction = random.choice(["left", "right", "up", "down", "idle"])
+            if direction == "left":
+                self.ai_observer_direction = vec(-1, 0)
+            elif direction == "right":
+                self.ai_observer_direction = vec(1, 0)
+            elif direction == "up":
+                self.ai_observer_direction = vec(0, -1)
+            elif direction == "down":
+                self.ai_observer_direction = vec(0, 1)
+            else:
+                self.ai_observer_direction = vec(0, 0)
+
+        self.player.vel = self.ai_observer_direction * self.ai_observer_speed
+
+        if self.ai_observer_direction.x < 0:
+            self.player.image = self.player.player_imgs_left[self.player.left_img_index]
+            self.player.left_img_index = (self.player.left_img_index + 1) % len(self.player.player_imgs_left)
+        elif self.ai_observer_direction.x > 0:
+            self.player.image = self.player.player_imgs_right[self.player.right_img_index]
+            self.player.right_img_index = (self.player.right_img_index + 1) % len(self.player.player_imgs_right)
+        elif self.ai_observer_direction.y < 0:
+            self.player.image = self.player.player_imgs_up[self.player.up_img_index]
+            self.player.up_img_index = (self.player.up_img_index + 1) % len(self.player.player_imgs_up)
+        elif self.ai_observer_direction.y > 0:
+            self.player.image = self.player.player_imgs_down[self.player.down_img_index]
+            self.player.down_img_index = (self.player.down_img_index + 1) % len(self.player.player_imgs_down)
+
+        if not self.player.imposter:
+            return
+
+        for bot in self.bots:
+            if not bot.alive_status:
+                continue
+            if self.player.pos.distance_to(bot.pos) <= 60 and (self.killcooldown - self.killcooldown_start) > 15000:
+                self.effect_sounds['imposter_kill_sound'].play()
+                bot.image = bot.dead_player_img
+                bot.alive_status = False
+                bot.play_kill_count = 1
+                self.bot_killed += 1
+                self.bot_count -= 1
+                self.time_left_to_kill = 15
+                pygame.time.set_timer(self.kill_timer_event, 1000)
+                self.killcooldown_start = self.killcooldown
+                break
 
     def runmultiplayer(self):
         # Game main loop - set self.playing = False to end the game
@@ -2658,6 +2713,8 @@ class Game:
                 # if key is H and game is not paused
                 if event.key == pg.K_h and not self.paused:
                     self.draw_debug = not self.draw_debug
+                if event.key == pg.K_F6 and self.gamemode == "Freeplay":
+                    self.ai_observer_enabled = not self.ai_observer_enabled
                 # Create a toggle key for night fog switch
                 # if key is ctrl and game is not paused
                 if (event.key == pg.K_LCTRL or event.key == pg.K_RCTRL) and not self.paused and self.emerg_meeting_button_status == 0:
