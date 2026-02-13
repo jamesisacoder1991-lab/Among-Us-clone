@@ -32,6 +32,22 @@ An unofficial clone of the popular multiplayer game 'Among Us', recreated in Pyt
   * meeting overlay (`AI Emergency Meeting`) with accusation lines,
   * bottom-left counters (`AI Meetings`, `Reports`) increasing.
 
+#### If GitHub shows merge conflicts
+* Update your local main first: `git checkout main && git pull origin main`
+* Rebase your feature branch on latest main:
+  * `git checkout <your-feature-branch>`
+  * `git rebase main`
+* Resolve conflicts in `game.py`, `sprites.py`, and `README.md` by keeping:
+  * `ai_evidence_memory` + `ai_suspicion_memory` logic,
+  * `record_ai_observation(...)`,
+  * AI meeting methods (`start_ai_meeting`, `resolve_ai_meeting`, `update_ai_meeting`),
+  * Freeplay counters/UI text.
+* After resolving each file:
+  * `git add <file>`
+  * `git rebase --continue`
+* Push updated branch:
+  * `git push --force-with-lease origin <your-feature-branch>`
+
 #### Local Multiplayer
 * To start the game server for multiplayer support `python server.py`
 * To start the game client `python main.py`

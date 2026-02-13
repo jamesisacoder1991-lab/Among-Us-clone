@@ -160,6 +160,7 @@ class Game:
         self.ai_meeting_result_text = ""
         self.ai_meeting_cooldown_until = 0
         self.ai_suspicion_memory = {}
+        self.ai_evidence_memory = {}
         self.ai_meetings_started = 0
         self.ai_reports_triggered = 0
         self.kill_victim_anim = False
@@ -711,6 +712,7 @@ class Game:
         self.ai_meeting_result_text = ""
         self.ai_meeting_cooldown_until = 0
         self.ai_suspicion_memory = {}
+        self.ai_evidence_memory = {}
         self.ai_meetings_started = 0
         self.ai_reports_triggered = 0
 
@@ -834,7 +836,23 @@ class Game:
 
         self.ai_reporter_name = reporter_bot.bot_colour
         self.ai_reports_triggered += 1
+        self.record_ai_observation(reporter_bot.bot_colour, self.player.player_colour, 0.8, "reported_body")
         self.start_ai_meeting(reporter_bot)
+
+    def record_ai_observation(self, observer_colour, suspect_colour, amount, reason="observation"):
+        if observer_colour == suspect_colour:
+            return
+
+        self.ai_evidence_memory.setdefault(observer_colour, {})
+        self.ai_evidence_memory[observer_colour][suspect_colour] = self.ai_evidence_memory[observer_colour].get(
+            suspect_colour,
+            0.0,
+        ) + amount
+        self.ai_suspicion_memory.setdefault(observer_colour, {})
+        self.ai_suspicion_memory[observer_colour][suspect_colour] = min(
+            6.0,
+            self.ai_suspicion_memory[observer_colour].get(suspect_colour, 0.0) + amount,
+        )
 
     def start_ai_meeting(self, reporter_bot):
         self.ai_meeting_active = True
@@ -861,8 +879,9 @@ class Game:
             for candidate in candidates:
                 if candidate == voter.bot_colour:
                     continue
-                score = random.uniform(0.1, 1.2)
+                score = 0.0
                 score += self.ai_suspicion_memory.get(voter.bot_colour, {}).get(candidate, 0.0)
+                score += self.ai_evidence_memory.get(voter.bot_colour, {}).get(candidate, 0.0)
                 if candidate == self.player.player_colour:
                     seen_recently = now - voter.ai_last_seen_imposter_tick
                     if seen_recently < 9000:
@@ -872,6 +891,7 @@ class Game:
                         score += 1.1
                 if candidate == self.player.player_colour and voter.bot_colour == reporter_bot.bot_colour:
                     score += 2.0 + evidence_strength
+                score += random.uniform(0.0, 0.25)
                 voter_map[candidate] = score
             opinions[voter.bot_colour] = voter_map
 
@@ -897,7 +917,10 @@ class Game:
             if not opinions[voter.bot_colour]:
                 continue
             vote_target = max(opinions[voter.bot_colour], key=opinions[voter.bot_colour].get)
-            self.ai_meeting_votes[voter.bot_colour] = vote_target
+            if opinions[voter.bot_colour][vote_target] < 1.2:
+                self.ai_meeting_votes[voter.bot_colour] = "SKIP"
+            else:
+                self.ai_meeting_votes[voter.bot_colour] = vote_target
 
     def resolve_ai_meeting(self):
         if not self.ai_meeting_votes:
@@ -908,6 +931,12 @@ class Game:
         tally = {}
         for _, target in self.ai_meeting_votes.items():
             tally[target] = tally.get(target, 0) + 1
+
+        if "SKIP" in tally and tally["SKIP"] >= max(tally.values()):
+            self.ai_meeting_result_text = "AI skipped vote due to low confidence."
+            self.ai_meeting_active = False
+            self.ai_meeting_cooldown_until = pg.time.get_ticks() + 4500
+            return
 
         top_target = max(tally, key=tally.get)
         top_votes = tally[top_target]
@@ -936,6 +965,8 @@ class Game:
                 break
 
         for voter_colour, voted_target in self.ai_meeting_votes.items():
+            if voted_target == "SKIP":
+                continue
             self.ai_suspicion_memory.setdefault(voter_colour, {})
             if voted_target == top_target:
                 self.ai_suspicion_memory[voter_colour][voted_target] = min(

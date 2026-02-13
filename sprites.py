@@ -533,6 +533,7 @@ class Bot(pg.sprite.Sprite):
 
         if self.game.player.alive_status and self.game.player.imposter and self.game.player.pos.distance_to(self.pos) < 220:
             self.ai_last_seen_imposter_tick = now
+            self.game.record_ai_observation(self.bot_colour, self.game.player.player_colour, 0.12, "saw_imposter")
             flee_vector = self.pos - self.game.player.pos
             if flee_vector.length_squared() == 0:
                 flee_vector = vec(random.choice([-1, 1]), random.choice([-1, 1]))
@@ -549,6 +550,10 @@ class Bot(pg.sprite.Sprite):
                     self.ai_state = "report"
                     self.ai_target = vec(self.game.ai_emergency_button_pos)
                     self.ai_report_cooldown_until = now + 10000
+                    if self.game.player.pos.distance_to(bot.pos) < 280:
+                        self.game.record_ai_observation(self.bot_colour, self.game.player.player_colour, 0.95, "saw_body_with_imposter")
+                    else:
+                        self.game.record_ai_observation(self.bot_colour, self.game.player.player_colour, 0.35, "saw_body")
                     break
 
         if self.ai_state == "flee" and now >= self.ai_state_until:
