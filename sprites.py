@@ -442,6 +442,10 @@ class Bot(pg.sprite.Sprite):
         self.play_kill_count = 0
         self.ai_change_direction_at = pg.time.get_ticks() + random.randint(1200, 3500)
         self.bot_speed = random.randint(80, 160)
+        self.ai_target = vec(x, y)
+        self.ai_state = "patrol"
+        self.ai_state_until = 0
+        self.ai_report_cooldown_until = 0
         
 
 
@@ -478,7 +482,9 @@ class Bot(pg.sprite.Sprite):
 
 
     def update(self):
-        if self.alive_status:
+        if self.alive_status and self.game.gamemode == "Freeplay":
+            self.update_ai_brain()
+        elif self.alive_status:
             now = pg.time.get_ticks()
             if now >= self.ai_change_direction_at:
                 self.ai_change_direction_at = now + random.randint(1200, 3500)
@@ -501,6 +507,60 @@ class Bot(pg.sprite.Sprite):
         self.collide_with_walls('x')
         self.rect.y = self.pos.y
         self.collide_with_walls('y')
+
+    def choose_patrol_target(self):
+        choices = self.game.ai_waypoints if self.game.ai_waypoints else [self.pos]
+        best = self.pos
+        best_score = float('-inf')
+        for candidate in choices:
+            distance = self.pos.distance_to(candidate)
+            score = -distance + random.uniform(-120, 120)
+            if self.game.player.alive_status and self.game.player.imposter:
+                player_distance = self.game.player.pos.distance_to(candidate)
+                if player_distance < 260:
+                    score -= (260 - player_distance)
+            if score > best_score:
+                best_score = score
+                best = candidate
+        return vec(best)
+
+    def update_ai_brain(self):
+        now = pg.time.get_ticks()
+
+        if self.game.player.alive_status and self.game.player.imposter and self.game.player.pos.distance_to(self.pos) < 220:
+            flee_vector = self.pos - self.game.player.pos
+            if flee_vector.length_squared() == 0:
+                flee_vector = vec(random.choice([-1, 1]), random.choice([-1, 1]))
+            self.ai_state = "flee"
+            self.ai_state_until = now + random.randint(1200, 2200)
+            self.ai_target = self.pos + flee_vector.normalize() * random.randint(180, 320)
+
+        if now >= self.ai_report_cooldown_until:
+            for bot in self.game.bots:
+                if bot is self or bot.alive_status:
+                    continue
+                if self.pos.distance_to(bot.pos) < 190:
+                    self.ai_state = "report"
+                    self.ai_target = vec(self.game.ai_emergency_button_pos)
+                    self.ai_report_cooldown_until = now + 10000
+                    break
+
+        if self.ai_state == "flee" and now >= self.ai_state_until:
+            self.ai_state = "patrol"
+
+        if self.ai_state == "report" and self.pos.distance_to(self.ai_target) < 65:
+            self.game.handle_ai_report(self)
+            self.ai_state = "patrol"
+
+        if self.ai_state == "patrol" and (self.pos.distance_to(self.ai_target) < 45 or now >= self.ai_change_direction_at):
+            self.ai_change_direction_at = now + random.randint(800, 2200)
+            self.ai_target = self.choose_patrol_target()
+
+        desired = self.ai_target - self.pos
+        if desired.length() > 5:
+            self.vel = desired.normalize() * self.bot_speed
+        else:
+            self.vel = vec(0, 0)
 
 class Wall(pg.sprite.Sprite):
     def __init__(self, game, x, y):

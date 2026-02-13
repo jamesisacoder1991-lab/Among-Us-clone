@@ -146,6 +146,12 @@ class Game:
         self.ai_observer_speed = 210
         self.ai_observer_direction = vec(0, 0)
         self.ai_observer_next_turn = 0
+        self.ai_waypoints = []
+        self.ai_emergency_button_pos = vec(3224, 656)
+        self.ai_last_kill_pos = None
+        self.ai_last_kill_tick = 0
+        self.ai_forced_crew_win = False
+        self.ai_reporter_name = ""
         self.kill_victim_anim = False
         self.kill_victim_anim_index = -1
         self.emergency_meeting_index = 0
@@ -684,6 +690,11 @@ class Game:
         self.items = pg.sprite.Group()
         self.bots = pg.sprite.Group()
         self.players_server = pg.sprite.Group()
+        self.ai_waypoints = []
+        self.ai_forced_crew_win = False
+        self.ai_reporter_name = ""
+        self.ai_last_kill_pos = None
+        self.ai_last_kill_tick = 0
 
         # mini map player position indicator
         self.player_map_square = pg.Surface([3 * 5, 3 * 5], pg.SRCALPHA, 32)
@@ -717,6 +728,14 @@ class Game:
                 Obstacle(self, tile_object.x, tile_object.y, tile_object.width, tile_object.height)
             if tile_object.name == 'admin_btn2':
                 Obstacle(self, tile_object.x, tile_object.y, tile_object.width, tile_object.height)
+
+            if tile_object.name in ['bot1', 'bot2', 'bot3', 'bot4', 'bot5', 'bot6', 'bot7', 'bot8', 'bot9', 'bot10',
+                                    'vent', 'emergency_btn', 'emerg_btn', 'medbay_comp', 'security_room_comp',
+                                    'reactor', 'engines', 'admin_btn1', 'admin_btn2']:
+                self.ai_waypoints.append(vec(obj_center))
+
+            if tile_object.name in ['emergency_btn', 'emerg_btn']:
+                self.ai_emergency_button_pos = vec(obj_center)
 
             if tile_object.name == 'bot1':
                 bot_colours_temp_current = random.choice(bot_colours_temp)
@@ -772,6 +791,35 @@ class Game:
         self.camera = Camera(self.map.width, self.map.height)
         self.draw_debug = False
         self.effect_sounds['start_game'].play()
+
+    def stop_all_audio(self):
+        pg.mixer.music.stop()
+        pg.mixer.Channel(0).stop()
+        for m in self.foot_sounds['footsteps']:
+            m.stop()
+        for m in self.effect_sounds.values():
+            m.stop()
+        for m in self.electric_shock_sounds['electric_shock']:
+            m.stop()
+        for m in self.comms_radio_sounds['comms_radio']:
+            m.stop()
+        for m in self.ambient_sounds.values():
+            m.stop()
+
+    def handle_ai_report(self, reporter_bot):
+        if self.gamemode != "Freeplay" or self.ai_forced_crew_win:
+            return
+
+        now = pg.time.get_ticks()
+        witnessed_recent_kill = (
+            self.ai_last_kill_pos is not None
+            and (now - self.ai_last_kill_tick) < 7000
+            and reporter_bot.pos.distance_to(self.ai_last_kill_pos) < 450
+        )
+
+        if witnessed_recent_kill:
+            self.ai_forced_crew_win = True
+            self.ai_reporter_name = reporter_bot.bot_colour
 
     # CLEAR ASTEROIDS FUNCTIONS
     def show_score(self, x, y):
@@ -1016,55 +1064,28 @@ class Game:
             self.seconds = (pg.time.get_ticks() - self.start_ticks) / 1000
             self.sabotage_timer_visible_status = True
 
+            if self.ai_forced_crew_win:
+                self.stop_all_audio()
+                self.effect_sounds["victory_crew"].play()
+                self.menu.game_over(self.score_list, f"AI Report: {self.ai_reporter_name} exposed the imposter")
+                return
+
             # If missions are completed then win or loss display
             # For crew mate
             if self.missions_done == 8:
-                pg.mixer.music.stop()  # turn off background music
-                pg.mixer.Channel(0).stop()
-                for m in self.foot_sounds['footsteps']:
-                    m.stop()
-                for m in self.effect_sounds.values():
-                    m.stop()
-                for m in self.electric_shock_sounds['electric_shock']:
-                    m.stop()
-                for m in self.comms_radio_sounds['comms_radio']:
-                    m.stop()
-                for m in self.ambient_sounds.values():
-                    m.stop()
+                self.stop_all_audio()
                 self.effect_sounds["victory_crew"].play()
                 self.menu.game_over(self.score_list, '')
                 return
             # For imposter
             # if imposter kills all the bots or reactor meltdown sabotage timer equals to 0 then imposter wins
             elif self.bot_count == 0 or (self.sabotagecritical == True and (self.sabotagecriticaltimer - self.sabotagecriticaltimer_start) > 20000):
-                pg.mixer.music.stop()  # turn off background music
-                pg.mixer.Channel(0).stop()
-                for m in self.foot_sounds['footsteps']:
-                    m.stop()
-                for m in self.effect_sounds.values():
-                    m.stop()
-                for m in self.electric_shock_sounds['electric_shock']:
-                    m.stop()
-                for m in self.comms_radio_sounds['comms_radio']:
-                    m.stop()
-                for m in self.ambient_sounds.values():
-                    m.stop()
+                self.stop_all_audio()
                 self.effect_sounds["victory_imposter"].play()
                 self.menu.game_over_imposter(self.score_list, '')
                 return
             elif self.game_left:
-                pg.mixer.music.stop()  # turn off background music
-                pg.mixer.Channel(0).stop()
-                for m in self.foot_sounds['footsteps']:
-                    m.stop()
-                for m in self.effect_sounds.values():
-                    m.stop()
-                for m in self.electric_shock_sounds['electric_shock']:
-                    m.stop()
-                for m in self.comms_radio_sounds['comms_radio']:
-                    m.stop()
-                for m in self.ambient_sounds.values():
-                    m.stop()
+                self.stop_all_audio()
                 self.effect_sounds["game_left"].play()
                 return
 
@@ -1115,6 +1136,8 @@ class Game:
                 bot.play_kill_count = 1
                 self.bot_killed += 1
                 self.bot_count -= 1
+                self.ai_last_kill_pos = vec(bot.pos)
+                self.ai_last_kill_tick = pg.time.get_ticks()
                 self.time_left_to_kill = 15
                 pygame.time.set_timer(self.kill_timer_event, 1000)
                 self.killcooldown_start = self.killcooldown
