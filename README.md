@@ -37,6 +37,7 @@ An unofficial clone of the popular multiplayer game 'Among Us', recreated in Pyt
 * Rebase your feature branch on latest main:
   * `git checkout <your-feature-branch>`
   * `git rebase main`
+* Before committing conflict resolutions, run: `python scripts/check_merge_markers.py`
 * Resolve conflicts in `game.py`, `sprites.py`, and `README.md` by keeping:
   * `ai_evidence_memory` + `ai_suspicion_memory` logic,
   * `record_ai_observation(...)`,
