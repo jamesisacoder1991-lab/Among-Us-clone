@@ -6,15 +6,16 @@ import threading
 class Server:
     def __init__(self):
             self.ip = socket.gethostbyname(socket.gethostname())
-            while 1:
+            while True:
                 try:
                     #self.port = int(input('Enter port number to run on --> '))
                     self.port = 4322
                     self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    self.s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                     self.s.bind((self.ip, self.port))
 
                     break
-                except:
+                except OSError:
                     print("Couldn't bind to that port")
 
             self.connections = []
@@ -31,23 +32,30 @@ class Server:
 
             self.connections.append(c)
 
-            threading.Thread(target=self.handle_client,args=(c,addr,)).start()
+            threading.Thread(target=self.handle_client,args=(c,addr,), daemon=True).start()
         
     def broadcast(self, sock, data):
         for client in self.connections:
             if client != self.s and client != sock:
                 try:
                     client.send(data)
-                except:
-                    pass
+                except OSError:
+                    if client in self.connections:
+                        self.connections.remove(client)
 
     def handle_client(self,c,addr):
-        while 1:
+        while True:
             try:
                 data = c.recv(1024)
+                if not data:
+                    break
                 self.broadcast(c, data)
-            
+
             except socket.error:
-                c.close()
+                break
+
+        if c in self.connections:
+            self.connections.remove(c)
+        c.close()
 
 server = Server()
